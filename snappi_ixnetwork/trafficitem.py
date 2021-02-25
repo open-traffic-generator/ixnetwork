@@ -1,5 +1,6 @@
 from snappi_ixnetwork.timer import Timer
 from snappi_ixnetwork.customfield import CustomField
+import json
 
 
 class TrafficItem(CustomField):
@@ -180,6 +181,7 @@ class TrafficItem(CustomField):
         - UPDATE TrafficItem for any config.flows[*].name that exists
         """
         ixn_traffic_item = self._api._traffic_item
+        self._resource_manager = self._api._ixnetwork.ResourceManager
         self._api._remove(ixn_traffic_item, self._api.snappi_config.flows)
         if len(self._api.snappi_config.flows) > 0:
             for flow in self._api.snappi_config.flows:
@@ -243,13 +245,11 @@ class TrafficItem(CustomField):
         """
         args = {'Sources': [], 'Destinations': []}
         if (endpoint.choice == "port"):
-            args['Sources'].append(
-                self._api.get_ixn_object(
-                    endpoint.port.tx_name).Protocols.find().href)
+            args['Sources'].append("{0}/protocols".format(self._api.get_ixn_href(
+                endpoint.port.tx_name)))
             if endpoint.port.rx_name != None:
-                args['Destinations'].append(
-                    self._api.get_ixn_object(
-                        endpoint.port.rx_name).Protocols.find().href)
+                args['Destinations'].append("{0}/protocols".format(self._api.get_ixn_href(
+                    endpoint.port.rx_name)))
         else:
             for device_name in endpoint.device.tx_names:
                 args['Sources'].append(self._api.get_ixn_href(device_name))
@@ -285,6 +285,7 @@ class TrafficItem(CustomField):
         any stack items so that the stack list matches the headers list.
         If the headers list is empty then use the traffic generator default stack.
         """
+        self._imports = []
         headers = self.adjust_header(headers)
         ixn_stack = ixn_stream.Stack.find()
         for i in range(0, len(headers)):
@@ -302,7 +303,7 @@ class TrafficItem(CustomField):
                     stack = self._add_stack(ixn_stream, ixn_stack[i], header)
                 else:
                     stack = ixn_stack[i]
-            self._configure_field(stack.Field, header)
+            self._configure_field(stack, header)
 
         # scan and compare new stack to overcome IxNetwork stack serialization
         # then remove additional stack
@@ -325,7 +326,9 @@ class TrafficItem(CustomField):
                 header_index += 1
         for stack in stacks_to_remove[::-1]:
             stack.Remove()
-
+        
+        self._import(self._imports)
+        
     def _add_stack(self, ixn_stream, ixn_stack, header):
         type_id = '^%s$' % TrafficItem._HEADER_TO_TYPE[header.choice]
         template = self._api._traffic.ProtocolTemplate.find(
@@ -333,9 +336,50 @@ class TrafficItem(CustomField):
         stack_href = ixn_stack.AppendProtocol(template)
         return ixn_stream.Stack.read(stack_href)
 
-    def _configure_field(self, ixn_field, header, field_choice=False):
+    
+    def _select_field(self, stack_href, field_properties = ['*']):
+        payload = {
+            'selects': [{
+                'from':
+                stack_href,
+                'properties': [],
+                'children': [{
+                    'child': 'field',
+                    'properties': field_properties,
+                    'filters': []
+                }],
+                'inlines': []
+            }]
+        }
+        url = '%s/operations/select?xpath=true' % self._api._ixnetwork.href
+        results = self._api._ixnetwork._connection._execute(url, payload)
+        field = {}
+        try:
+            field = results[0]['field']
+        except Exception:
+            pass
+        return field
+    
+    def _import(self, imports):
+        if len(imports) > 0:
+            errata = self._resource_manager.ImportConfig(
+                json.dumps(imports), False)
+            for item in errata:
+                self._api.warning(item)
+            return len(errata) == 0
+        return True
+    
+    def _configure_field(self, ixn_stack, header, field_choice=False):
         """Transform flow.packets[0..n].header.choice to /traffic/trafficItem/configElement/stack/field
         """
+        ixn_field = self._select_field(ixn_stack.href,
+                           field_properties = ['xpath',
+                                            'href',
+                                            'fieldTypeId',
+                                            'readOnly',
+                                            'SupportsAuto',
+                                            'Auto',
+                                            'defaultValue',])
         field_map = getattr(self, '_%s' % header.choice.upper())
         packet = getattr(header, header.choice)
         if isinstance(field_map, dict) is False:
@@ -360,73 +404,86 @@ class TrafficItem(CustomField):
             if pattern.choice is not None:
                 custom_field(ixn_field, pattern)
             return
-    
-        ixn_field = ixn_field.find(FieldTypeId=field_type_id)
-        self._set_default(ixn_field, field_choice)
+
+        ixn_field = next((sub for sub in ixn_field if sub[
+                'fieldTypeId'] == field_type_id), None)
+        import_field = {
+            'xpath' : ixn_field['xpath']
+        }
+        self._set_default(ixn_field, field_choice,
+                            import_field)
     
         if pattern.choice is None:
             return
     
         if pattern.choice == 'value':
-            ixn_field.update(Auto=False,
-                             ActiveFieldChoice=field_choice,
-                             ValueType='singleValue',
-                             SingleValue=pattern.value)
+            import_field.update({
+                'auto': False,
+                'activeFieldChoice': field_choice,
+                'valueType': 'singleValue',
+                'singleValue': pattern.value,
+            })
         elif pattern.choice == 'values':
-            ixn_field.update(Auto=False,
-                             ActiveFieldChoice=field_choice,
-                             ValueType='valueList',
-                             ValueList=pattern.values)
+            import_field.update({
+                'auto': False,
+                'activeFieldChoice': field_choice,
+                'valueType': 'valueList',
+                'valueList': pattern.values,
+            })
         elif pattern.choice == 'increment':
-            try:
-                ixn_field.update(Auto=False,
-                                 ValueType='increment',
-                                 ActiveFieldChoice=field_choice,
-                                 StartValue=pattern.increment.start,
-                                 StepValue=pattern.increment.step,
-                                 CountValue=pattern.increment.count)
-            except Exception as e:
-                print(e)
+            import_field.update({
+                'auto': False,
+                'activeFieldChoice': field_choice,
+                'valueType': 'increment',
+                'startValue': pattern.increment.start,
+                'stepValue' : pattern.increment.step,
+                'countValue' : pattern.increment.count,
+            })
         elif pattern.choice == 'decrement':
-            try:
-                ixn_field.update(Auto=False,
-                                 ValueType='decrement',
-                                 ActiveFieldChoice=field_choice,
-                                 StartValue=pattern.decrement.start,
-                                 StepValue=pattern.decrement.step,
-                                 CountValue=pattern.decrement.count)
-            except Exception as e:
-                print(e)
+            import_field.update({
+                'auto': False,
+                'activeFieldChoice': field_choice,
+                'valueType': 'decrement',
+                'startValue': pattern.decrement.start,
+                'stepValue' : pattern.decrement.step,
+                'countValue' : pattern.decrement.count,
+            })
         elif pattern.choice == 'random':
-            ixn_field.update(Auto=False,
-                             ActiveFieldChoice=field_choice,
-                             ValueType='repeatableRandomRange',
-                             MinValue=pattern.random.min,
-                             MaxValue=pattern.random.max,
-                             StepValue=pattern.random.step,
-                             Seed=pattern.random.seed,
-                             CountValue=pattern.random.count)
+            import_field.update({
+                'auto': False,
+                'activeFieldChoice': field_choice,
+                'valueType': 'repeatableRandomRange',
+                'minValue': pattern.random.min,
+                'maxValue' : pattern.random.max,
+                'stepValue' : pattern.random.step,
+                'seed' : pattern.random.seed,
+                'countValue' : pattern.random.count,
+            })
         else:
             # TBD: add to set_config errors - invalid pattern specified
             pass
     
         if pattern.metric_group is not None:
-            ixn_field.TrackingEnabled = True
-            self._api.ixn_objects[pattern.metric_group] = ixn_field.href
+            import_field['trackingEnabled'] = True
+            self._api.ixn_objects[pattern.metric_group] = ixn_field[
+                        'href']
+        self._imports.append(import_field)
 
-    def _set_default(self, ixn_field, field_choice):
+    def _set_default(self, ixn_field, field_choice, import_field):
         """We are setting all the field to default. Otherwise test is keeping the same value from previous run."""
-        if ixn_field.ReadOnly:
+        if ixn_field['readOnly'] is True:
             return
-        
-        if ixn_field.SupportsAuto:
-            if ixn_field.Auto is not True:
-                ixn_field.Auto = True
+    
+        if ixn_field['supportsAuto'] is True:
+            if ixn_field['auto'] is not True:
+                import_field['auto'] = True
         else:
-            ixn_field.update(Auto=False,
-                             ActiveFieldChoice=field_choice,
-                             ValueType='singleValue',
-                             SingleValue=ixn_field.DefaultValue)
+            import_field.update({
+                'auto' : False,
+                'activeFieldChoice' : field_choice,
+                'valueType' : 'singleValue',
+                'singleValue' : ixn_field['defaultValue'],
+            })
 
     def _configure_size(self, ixn_stream, size):
         """ Transform frameSize flows.size to /traffic/trafficItem[*]/configElement[*]/frameSize
