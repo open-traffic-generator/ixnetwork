@@ -44,8 +44,6 @@ class CustomField(object):
     }
 
     def _ipv4_priority(self, ixn_field, priority):
-        return
-        
         if priority.choice == 'dscp':
             field_type_id = None
             first_value = str(self._get_first_value(priority.dscp.phb))

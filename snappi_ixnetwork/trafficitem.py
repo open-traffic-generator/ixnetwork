@@ -372,14 +372,17 @@ class TrafficItem(CustomField):
     def _configure_field(self, ixn_stack, header, field_choice=False):
         """Transform flow.packets[0..n].header.choice to /traffic/trafficItem/configElement/stack/field
         """
-        ixn_field = self._select_field(ixn_stack.href,
-                           field_properties = ['xpath',
-                                            'href',
-                                            'fieldTypeId',
-                                            'readOnly',
-                                            'SupportsAuto',
-                                            'Auto',
-                                            'defaultValue',])
+        if isinstance(ixn_stack, list):
+            ixn_field = ixn_stack
+        else:
+            ixn_field = self._select_field(ixn_stack.href,
+                               field_properties = ['xpath',
+                                                'href',
+                                                'fieldTypeId',
+                                                'readOnly',
+                                                'SupportsAuto',
+                                                'Auto',
+                                                'defaultValue',])
         field_map = getattr(self, '_%s' % header.choice.upper())
         packet = getattr(header, header.choice)
         if isinstance(field_map, dict) is False:
