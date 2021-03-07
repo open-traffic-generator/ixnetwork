@@ -1,3 +1,6 @@
+import pytest
+
+@pytest.mark.skip(reason="Temporary skip for this branch")
 def test_counter_pfc_pause(api, b2b_raw_config, utils):
     """
     Configure a pfc pause header fields,
@@ -65,3 +68,7 @@ def test_counter_pfc_pause(api, b2b_raw_config, utils):
 
     attrs['PFC Queue 7'] = ('3333', '1', '10')
     utils.validate_config(api, 0, **attrs)
+
+import pytest
+if __name__ == '__main__':
+    pytest.main(['-s', __file__])
