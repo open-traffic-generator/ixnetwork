@@ -14,7 +14,7 @@ def test_ip_device_and_flow(api, b2b_raw_config, utils):
 
     size = 128
     packets = 100000
-    count = 10
+    count = 1
     mac_tx = utils.mac_or_ip_addr_from_counter_pattern(
         '00:10:10:20:20:10', '00:00:00:00:00:01', count, True
     )
@@ -54,6 +54,8 @@ def test_ip_device_and_flow(api, b2b_raw_config, utils):
         dev.ethernet.ipv4.prefix = 24
     f1, f2 = b2b_raw_config.flows.flow(name='TxFlow-2')
     f1.name = 'TxFlow-1'
+    f1.metrics = True
+    f2.metrics = True
     f1.tx_rx.device.tx_names = [
         b2b_raw_config.devices[i].name for i in range(count)
     ]

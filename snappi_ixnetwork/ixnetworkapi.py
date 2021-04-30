@@ -132,7 +132,7 @@ class Api(snappi.Api):
         return o
 
     def _request_detail(self):
-        request_detail = snappi.Details()
+        request_detail = snappi.ResponseWarning()
         errors = self._errors
         warnings = list()
         app_errors = self._globals.AppErrors.find()
@@ -148,7 +148,8 @@ class Api(snappi.Api):
                             warnings.append("IxNet - {0}".format(error.Description))
                         if error.ErrorLevel == 'kError':
                             errors.append("IxNet - {0}".format(error.Description))
-        request_detail.errors = errors
+        if len(errors) > 0:
+            raise Exception("{}".format("\n".join(errors)))
         request_detail.warnings = warnings
         return request_detail
     
@@ -236,7 +237,7 @@ class Api(snappi.Api):
                 request)
         self._connect()
         return self.capture.results(request)
-    
+
     def get_metrics(self, request):
         """
         Gets port, flow and protocol metrics.
@@ -257,17 +258,16 @@ class Api(snappi.Api):
                 'The content must be of type Union[MetricsRequest, str]')
         if isinstance(request, str) is True:
             request = metric_req.deserialize(request)
-        # Need to change the code style when the choice Enum grows big
         if request.choice == 'port':
             response = self.vport.results(request.port)
             metric_res = self.metrics_response()
             metric_res.port_metrics.deserialize(response)
             return metric_res
-        if request.choice == 'flow':
-            response = self.traffic_item.results(request.flow)
-            metric_res = self.metrics_response()
-            metric_res.flow_metrics.deserialize(response)
-            return metric_res
+        # if request.choice == 'flow':
+        #     response = self.traffic_item.results(request.flow)
+        #     metric_res = self.metrics_response()
+        #     metric_res.flow_metrics.deserialize(response)
+        #     return metric_res
         if request.choice in self.protocol_metrics.get_supported_protocols():
             response = self.protocol_metrics.results(request)
             metric_res = self.metrics_response()
@@ -280,6 +280,20 @@ class Api(snappi.Api):
             the supported choices are \
             ['port', 'flow']".format(request.choice)
             raise Exception(msg)
+
+    def get_flow_metrics(self, request):
+        self._connect()
+        metric_req = self.advancedmetrics_request()
+        if isinstance(request, (type(metric_req),
+                                str)) is False:
+            raise TypeError(
+                'The content must be of type Union[MetricsRequest, str]')
+        if isinstance(request, str) is True:
+            request = metric_req.deserialize(request)
+        response = self.traffic_item.results(request)
+        metric_res = self.advancedmetrics_response()
+        metric_res.deserialize(response)
+        return metric_res
 
     def add_error(self, error):
         """Add an error to the global errors
@@ -312,7 +326,7 @@ class Api(snappi.Api):
         return LocationInfo(chassis_info,
                         card_info,
                         port_info)
-    
+
     def special_char(self, names):
         is_names = True
         if not isinstance(names, list):

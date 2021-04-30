@@ -117,7 +117,7 @@ def start_traffic(api, cfg, start_capture=True):
     """
     print('Setting config ...')
     response = api.set_config(cfg)
-    assert(len(response.errors)) == 0
+    # assert(len(response.errors)) == 0
 
     capture_names = get_capture_port_names(cfg)
     if capture_names and start_capture:
@@ -207,10 +207,10 @@ def get_all_stats(api, print_output=True):
         port_results = []
 
     print('Fetching all flow stats ...')
-    request = api.metrics_request()
-    request.choice = request.FLOW
-    request.flow
-    flow_results = api.get_metrics(request).flow_metrics
+    request = api.advancedmetrics_request()
+    # request.choice = request.FLOW
+    # request.flow
+    flow_results = api.get_flow_metrics(request)
     if flow_results is None:
         flow_results = []
 

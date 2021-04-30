@@ -22,7 +22,9 @@ class TrafficItem(CustomField):
         ('bytes_rx_rate', 'Rx Rate (Bps)', float),
         ('min_latency_ns', 'Store-Forward Min Latency (ns)', int),
         ('max_latency_ns', 'Store-Forward Max Latency (ns)', int),
-        ('avg_latency_ns', 'Store-Forward Avg Latency (ns)', int)
+        ('avg_latency_ns', 'Store-Forward Avg Latency (ns)', int),
+        ('first_timestamp_ns', 'First TimeStamp', str),
+        ('last_timestamp_ns', 'Last TimeStamp', str)
     ]
 
     _STACK_IGNORE = ['ethernet.fcs', 'pfcPause.fcs']
@@ -200,7 +202,9 @@ class TrafficItem(CustomField):
                     self._update(ixn_traffic_item, **args)
                 self._configure_endpoint(ixn_traffic_item.EndpointSet,
                                          flow.tx_rx)
-                self._configure_tracking(flow, ixn_traffic_item.Tracking)
+                metrics = flow._properties.get('metrics')
+                if metrics is not None and metrics is True:
+                    self._configure_tracking(flow, ixn_traffic_item.Tracking)
                 ixn_ce = ixn_traffic_item.ConfigElement.find()
                 hl_stream_count = len(ixn_traffic_item.HighLevelStream.find())
                 self._configure_stack(ixn_ce, flow.packet)
@@ -518,6 +522,20 @@ class TrafficItem(CustomField):
         args['Rate'] = value
         self._update(ixn_frame_rate, **args)
 
+    def _configure_delay(self, delay, args):
+        if delay.choice is not None:
+            value = getattr(delay, delay.choice, None)
+            if value is None:
+                raise Exception("Delay must be of type <int>")
+            if isinstance(value, float):
+                self._api.warning("Cast Delay to <int> due to software limitation")
+            if delay.choice == 'microseconds':
+                args['StartDelayUnits'] = 'nanoseconds'
+                args['StartDelay'] = value * 1000
+            else:
+                args['StartDelayUnits'] = delay.choice
+                args['StartDelay'] = value
+    
     def _configure_tx_control(self, ixn_stream, hl_stream_count, duration):
         """Transform duration flows.duration to /traffic/trafficItem[*]/configElement[*]/TransmissionControl
         """
@@ -528,28 +546,34 @@ class TrafficItem(CustomField):
         if duration.choice == 'continuous':
             args['Type'] = 'continuous'
             args['MinGapBytes'] = duration.continuous.gap
-            args['StartDelay'] = duration.continuous.delay
-            args['StartDelayUnits'] = duration.continuous.delay_unit
+            self._configure_delay(duration.continuous.delay, args)
         elif duration.choice == 'fixed_packets':
             args['Type'] = 'fixedFrameCount'
             args['FrameCount'] = duration.fixed_packets.packets / hl_stream_count
             args['MinGapBytes'] = duration.fixed_packets.gap
-            args['StartDelay'] = duration.fixed_packets.delay
-            args['StartDelayUnits'] = duration.fixed_packets.delay_unit
+            self._configure_delay(duration.fixed_packets.delay, args)
         elif duration.choice == 'fixed_seconds':
             args['Type'] = 'fixedDuration'
             args['Duration'] = duration.fixed_seconds.seconds
             args['MinGapBytes'] = duration.fixed_seconds.gap
-            args['StartDelay'] = duration.fixed_seconds.delay
-            args['StartDelayUnits'] = duration.fixed_seconds.delay_unit
+            self._configure_delay(duration.fixed_seconds.delay, args)
         elif duration.choice == 'burst':
             args['Type'] = 'custom'
             args['BurstPacketCount'] = duration.burst.packets
             args['MinGapBytes'] = duration.burst.gap
             args[
                 'EnableInterBurstGap'] = True if duration.burst.gap > 0 else False
-            args['InterBurstGap'] = duration.burst.inter_burst_gap
-            args['InterBurstGapUnits'] = duration.burst.inter_burst_gap_unit
+            inter_burst_gap = duration.burst.inter_burst_gap
+            if inter_burst_gap.choice is not None:
+                value = getattr(inter_burst_gap, inter_burst_gap.choice, None)
+                if value is None:
+                    raise Exception("Inter packet gap mush be of type some <int> value")
+                if inter_burst_gap.choice == 'microseconds':
+                    args['InterBurstGap'] = value * 1000
+                    args['InterBurstGapUnits'] = 'nanoseconds'
+                else:
+                    args['InterBurstGap'] = value
+                    args['InterBurstGapUnits'] = inter_burst_gap.choice
         self._update(ixn_tx_control, **args)
 
     def transmit(self, request):
@@ -646,11 +670,39 @@ class TrafficItem(CustomField):
         else:
             return 'stopped'
 
+    def _construct_latency_and_timestamp(self, metrics):
+        latency = {
+            'min_latency_ns': 'minimum_ns',
+            'max_latency_ns': 'maximum_ns',
+            'avg_latency_ns': 'average_ns'
+        }
+        for m_map in metrics:
+            m_map['latency'] = {}
+            m_map['timestamps'] = {}
+            for m in m_map:
+                if m_map[m] == '':
+                    continue
+                if m in latency.keys():
+                    m_map['latency'].update({
+                        latency[m]: m_map[m]})
+                if m in ['first_timestamp_ns', 'last_timestamp_ns']:
+                    val = m_map[m].split(':')
+                    mul = [3600, 60, 1]
+                    sv = sum([
+                        int(float(v) * 10**9 + 0.1) * mul[i]
+                        for i, v in enumerate(val)
+                    ])
+                    m_map['timestamps'].update({m: sv})
+            if len(m_map['latency']) == 0:
+                m_map.pop('latency')
+            if len(m_map['timestamps']) == 0:
+                m_map.pop('timestamps')
+
     def results(self, request):
         """Return flow results
         """
         # setup parameters
-        self._column_names = request._properties.get('column_names')
+        self._column_names = request._properties.get('metric_names')
         if self._column_names is None:
             self._column_names = []
         elif not isinstance(self._column_names, list):
@@ -665,10 +717,26 @@ class TrafficItem(CustomField):
             msg = "Invalid format of flow_names passed {},\
                     expected list".format(flow_names)
             raise Exception(msg)
-
-        filter = {'property': 'name', 'regex': '.*'}
-        filter['regex'] = '^(%s)$' % '|'.join(
-                        self._api.special_char(flow_names))
+        final_flow_names = [
+            f.name for f in self._api._config.flows
+            if f.metrics is True and f.name in flow_names
+        ]
+        if final_flow_names == []:
+            msg = """
+            To fetch flow metrics at least one flow shall have metric enabled
+            """
+            raise Exception(msg.strip())
+        diff = set(flow_names).difference(final_flow_names)
+        if len(diff) > 0:
+            self._api.warning(
+                "{} flow(s) is/are not enabled with metrics, \
+                   skipping the flow(s)".format("".join(list(diff)))
+            )
+        flow_names = final_flow_names
+        regfilter = {'property': 'name', 'regex': '.*'}
+        regfilter['regex'] = '^(%s)$' % '|'.join(
+            self._api.special_char(flow_names)
+        )
 
         flow_count = len(flow_names)
         ixn_page = self._api._ixnetwork.Statistics.View.find(Caption="Flow Statistics").Page
@@ -678,7 +746,7 @@ class TrafficItem(CustomField):
         # initialize result values
         flow_rows = {}
         for traffic_item in self._api.select_traffic_items(
-                traffic_item_filters=[filter]).values():
+                traffic_item_filters=[regfilter]).values():
             for stream in traffic_item['highLevelStream']:
                 for rx_port_name in stream['rxPortNames']:
                     flow_row = {}
@@ -698,6 +766,7 @@ class TrafficItem(CustomField):
         # resolve result values
         table = self._api.assistant.StatViewAssistant(
             'Flow Statistics')
+
         for row in table.Rows:
             if len(flow_names) > 0 and row['Traffic Item'] not in flow_names:
                 continue
@@ -718,5 +787,5 @@ class TrafficItem(CustomField):
                     except Exception:
                         # TODO print a warning maybe ?
                         pass
-
+        self._construct_latency_and_timestamp(flow_rows.values())
         return list(flow_rows.values())
