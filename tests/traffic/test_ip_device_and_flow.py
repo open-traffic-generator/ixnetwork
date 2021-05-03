@@ -92,6 +92,7 @@ def test_ip_device_and_flow(api, b2b_raw_config, utils):
         lambda: results_ok(api, utils, size, size * 2, packets),
         'stats to be as expected', timeout_seconds=20
     )
+    fetch_latency(api)
     utils.stop_traffic(api, b2b_raw_config)
     captures_ok(api, b2b_raw_config, utils, count, packets * 2)
 
@@ -106,6 +107,16 @@ def results_ok(api, utils, size1, size2, packets):
         port_results, flow_results, packets * size1 + packets * size2
     )
     return frames_ok and bytes_ok
+
+
+def fetch_latency(api):
+    request = api.advancedmetrics_request()
+    request.metric_names = ['latency']
+    try:
+        api.get_flow_metrics(request)
+        assert False
+    except Exception:
+        assert True
 
 
 def captures_ok(api, cfg, utils, count, packets):

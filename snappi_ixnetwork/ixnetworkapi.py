@@ -263,11 +263,6 @@ class Api(snappi.Api):
             metric_res = self.metrics_response()
             metric_res.port_metrics.deserialize(response)
             return metric_res
-        # if request.choice == 'flow':
-        #     response = self.traffic_item.results(request.flow)
-        #     metric_res = self.metrics_response()
-        #     metric_res.flow_metrics.deserialize(response)
-        #     return metric_res
         if request.choice in self.protocol_metrics.get_supported_protocols():
             response = self.protocol_metrics.results(request)
             metric_res = self.metrics_response()

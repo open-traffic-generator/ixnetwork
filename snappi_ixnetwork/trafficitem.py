@@ -168,7 +168,12 @@ class TrafficItem(CustomField):
         "n_pdu_number" : "gTPuOptionalFields.header.npduNumber",
         "next_extension_header_type" : "gTPuOptionalFields.header.nextExtHdrField"
     }
-    
+
+    _LATENCY_MAP = {
+        'store_forward': 'storeForward',
+        'cut_through': 'cutThrough'
+    }
+
     _CUSTOM = '_custom_headers'
 
     def __init__(self, ixnetworkapi):
@@ -185,6 +190,7 @@ class TrafficItem(CustomField):
         """
         ixn_traffic_item = self._api._traffic_item
         self._api._remove(ixn_traffic_item, self._api.snappi_config.flows)
+        self._advanced_config()
         if len(self._api.snappi_config.flows) > 0:
             for flow in self._api.snappi_config.flows:
                 self._endpoint_validation(flow)
@@ -221,6 +227,35 @@ class TrafficItem(CustomField):
             tracking_options.append('sourceDestPortPair0')
         if set(tracking_options) != set(ixn_tracking.TrackBy):
             ixn_tracking.update(TrackBy=tracking_options)
+
+    def _advanced_config(self):
+        self.ixn = self._api.assistant._ixnetwork
+        conf = self._api.snappi_config.advanced
+        try:
+            latency = bool(conf.latency.enable)
+        except TypeError:
+            msg = "Invalid bool type %s for latency" % conf.latency.enable
+            raise Exception(msg)
+        try:
+            convergence = bool(conf.convergence.enable)
+        except TypeError:
+            msg = "Invalid bool type %s for convergence"\
+                % conf.convergence.enable
+            raise Exception(msg)
+        try:
+            event = bool(conf.event.enable)
+        except TypeError:
+            msg = "Invalid bool type %s for event" % conf.event.enable
+            raise Exception(msg)
+        url = '%s/traffic/statistics/latency' % self.ixn.href
+        payload = {'enabled': latency}
+        if self._LATENCY_MAP.get(conf.latency.mode):
+            payload['mode'] = self._LATENCY_MAP[conf.latency.mode]
+        self._api._request('PATCH', url, payload)
+        url = '%s/traffic/statistics/cpdpConvergence' % self.ixn.href
+        payload = {'enabled': convergence}
+        self._api._request('PATCH', url, payload)
+        # TODO: add the code for event
 
     def _configure_options(self):
         enable_min_frame_size = False
@@ -676,6 +711,12 @@ class TrafficItem(CustomField):
             'max_latency_ns': 'maximum_ns',
             'avg_latency_ns': 'average_ns'
         }
+
+        adv = self._api.snappi_config.advanced.latency
+        if 'latency' in self._column_names and adv.enable in [None, False]:
+            msg = "Latency needs to be enabled first, to fetch latency metrics"
+            raise Exception(msg)
+
         for m_map in metrics:
             m_map['latency'] = {}
             m_map['timestamps'] = {}
