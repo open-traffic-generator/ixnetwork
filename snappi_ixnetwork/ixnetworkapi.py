@@ -294,7 +294,9 @@ class Api(snappi.Api):
         if isinstance(request, str) is True:
             request = adv_analytics_req.deserialize(request)
         response = self.advanced.result(request)
-        adv_analytics_req = self.advancedanalytics_response()
+        adv_analytics_res = self.advancedanalytics_response()
+        adv_analytics_res.deserialize(response)
+        return adv_analytics_res
     
     
     def add_error(self, error):
