@@ -21,7 +21,7 @@ class Advanced(object):
         self._api = ixnetworkapi
     
     def config(self):
-        advanced = self._api.snappi_config.advanced
+        advanced = getattr(self._api.snappi_config, 'advanced', None)
         if advanced is None:
             return
         latency =advanced.latency
