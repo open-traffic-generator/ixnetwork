@@ -169,11 +169,6 @@ class TrafficItem(CustomField):
         "next_extension_header_type" : "gTPuOptionalFields.header.nextExtHdrField"
     }
 
-    _LATENCY_MAP = {
-        'store_forward': 'storeForward',
-        'cut_through': 'cutThrough'
-    }
-
     _CUSTOM = '_custom_headers'
 
     def __init__(self, ixnetworkapi):
@@ -227,35 +222,6 @@ class TrafficItem(CustomField):
             tracking_options.append('sourceDestPortPair0')
         if set(tracking_options) != set(ixn_tracking.TrackBy):
             ixn_tracking.update(TrackBy=tracking_options)
-
-    def _advanced_config(self):
-        self.ixn = self._api.assistant._ixnetwork
-        conf = self._api.snappi_config.advanced
-        try:
-            latency = bool(conf.latency.enable)
-        except TypeError:
-            msg = "Invalid bool type %s for latency" % conf.latency.enable
-            raise Exception(msg)
-        try:
-            convergence = bool(conf.convergence.enable)
-        except TypeError:
-            msg = "Invalid bool type %s for convergence"\
-                % conf.convergence.enable
-            raise Exception(msg)
-        try:
-            event = bool(conf.event.enable)
-        except TypeError:
-            msg = "Invalid bool type %s for event" % conf.event.enable
-            raise Exception(msg)
-        url = '%s/traffic/statistics/latency' % self.ixn.href
-        payload = {'enabled': latency}
-        if self._LATENCY_MAP.get(conf.latency.mode):
-            payload['mode'] = self._LATENCY_MAP[conf.latency.mode]
-        self._api._request('PATCH', url, payload)
-        url = '%s/traffic/statistics/cpdpConvergence' % self.ixn.href
-        payload = {'enabled': convergence}
-        self._api._request('PATCH', url, payload)
-        # TODO: add the code for event
 
     def _configure_options(self):
         enable_min_frame_size = False
