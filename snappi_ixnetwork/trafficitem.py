@@ -185,7 +185,6 @@ class TrafficItem(CustomField):
         """
         ixn_traffic_item = self._api._traffic_item
         self._api._remove(ixn_traffic_item, self._api.snappi_config.flows)
-        self._advanced_config()
         if len(self._api.snappi_config.flows) > 0:
             for flow in self._api.snappi_config.flows:
                 self._endpoint_validation(flow)
