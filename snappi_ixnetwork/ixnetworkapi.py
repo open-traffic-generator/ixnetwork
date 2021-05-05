@@ -58,6 +58,7 @@ class Api(snappi.Api):
         self._link_state = self.link_state()
         self._capture_state = self.capture_state()
         self._capture_request = self.capture_request()
+        self._ixn_route_objects = {}
         self.validation = Validation(self)
         self.vport = Vport(self)
         self.lag = Lag(self)
@@ -115,6 +116,16 @@ class Api(snappi.Api):
         """Returns an href given a unique configuration name
         """
         return self._ixn_objects[name]
+    
+    @property
+    def ixn_route_objects(self):
+        return self._ixn_route_objects
+    
+    def get_route_object(self, name):
+        if name not in self._ixn_route_objects.keys():
+            raise Exception("%s not within configure routes" %name)
+        return self._ixn_route_objects[name]
+        
 
     @property
     def assistant(self):
@@ -228,6 +239,20 @@ class Api(snappi.Api):
         self.capture.set_capture_state(payload)
         return self._request_detail()
 
+    def set_route_state(self, payload):
+        route_state = self.route_state()
+        if isinstance(payload, (type(route_state),
+                                str)) is False:
+            raise TypeError(
+                'The content must be of type Union[RouteState, str]')
+        if isinstance(payload, str) is True:
+            payload = route_state.deserialize(
+                                    payload)
+        self._connect()
+        with Timer(self, 'Setting route state'):
+            self.ngpf.set_route_state(payload)
+        return self._request_detail()
+    
     def get_capture(self, request):
         """Gets capture file and returns it as a byte stream
         """
@@ -302,7 +327,8 @@ class Api(snappi.Api):
                 'The content must be of type Union[AdvancedAnalyticsRequest, str]')
         if isinstance(request, str) is True:
             request = adv_analytics_req.deserialize(request)
-        response = self.advanced.result(request)
+        with Timer(self, 'Getting Analytics'):
+            response = self.advanced.result(request)
         adv_analytics_res = self.advancedanalytics_response()
         adv_analytics_res.deserialize(response)
         return adv_analytics_res

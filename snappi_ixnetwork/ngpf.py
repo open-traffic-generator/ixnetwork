@@ -320,6 +320,9 @@ class Ngpf(object):
             ixn_bgp_property = ixn_pool.BgpIPRouteProperty.find()
         else:
             ixn_bgp_property = ixn_pool.BgpV6IPRouteProperty.find()
+        if route_range.name is not None:
+            ixn_bgp_property.Name = route_range.name
+            self._api.ixn_route_objects[route_range.name] = ixn_bgp_property
         self._configure_pattern(ixn_bgp_property.Ipv4NextHop, route_range.next_hop_address)
         advanced = route_range.advanced
         if advanced.multi_exit_discriminator is not None:
@@ -420,6 +423,9 @@ class Ngpf(object):
             ixn_bgp_property = ixn_pool.BgpIPRouteProperty.find()
         else:
             ixn_bgp_property = ixn_pool.BgpV6IPRouteProperty.find()
+        if route_range.name is not None:
+            ixn_bgp_property.Name = route_range.name
+            self._api.ixn_route_objects[route_range.name] = ixn_bgp_property
         self._configure_pattern(ixn_bgp_property.Ipv6NextHop, route_range.next_hop_address)
         advanced = route_range.advanced
         if advanced.multi_exit_discriminator is not None:
@@ -474,6 +480,21 @@ class Ngpf(object):
         glob_topo = self._api._globals.Topology.refresh()
         if glob_topo.Status == 'started':
             self._api._ixnetwork.StopAllProtocols('sync')
+
+    def set_route_state(self, payload):
+        if payload.state is None:
+            return
+        elif payload.state == 'advertise':
+            state = True
+        else:
+            state = False
+        names = payload.names
+        if len(names) == 0:
+            names = self._api.ixn_route_objects.keys()
+        for name in names:
+            ixn_route = self._api.get_route_object(name)
+            ixn_route.Active.Single(state)
+        self._api._ixnetwork.Globals.Topology.ApplyOnTheFly()
 
 class RouteAddresses(object):
     def __init__(self):

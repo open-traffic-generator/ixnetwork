@@ -1,4 +1,5 @@
-
+import re
+import time
 
 class Advanced(object):
     _LATENCY = {
@@ -12,13 +13,13 @@ class Advanced(object):
     }
     
     _EVENT = {
-        ('type', 'Event Name', str),
-        ('begin_timestamp_ns', 'Event Start Timestamp', str),
-        ('end_timestamp_ns', 'Event End Timestamp', str)
+        ('begin_timestamp_ns', 'Event Start Timestamp', int),
+        ('end_timestamp_ns', 'Event End Timestamp', int)
     }
     
     def __init__(self, ixnetworkapi):
         self._api = ixnetworkapi
+        self._analytics_timeout = 10
     
     def config(self):
         advanced = getattr(self._api.snappi_config, 'advanced', None)
@@ -71,14 +72,28 @@ class Advanced(object):
                 row[column_name] = 0
             else:
                 row[column_type] = column_value
-    
-    def get_flow_result(self, flow_rows, flow_name):
-        rows = []
-        for row in flow_rows:
-            if row['Traffic Item'] == flow_name:
-                rows.append(row)
-        return rows
         
+    def _get_flow_rows(self, flow_names):
+        count = 0
+        sleep_time = 0.5
+        flow_stat = self._api.assistant.StatViewAssistant(
+            'Flow Statistics')
+        while True:
+            flow_rows = flow_stat.Rows
+            has_event = False
+            for row in flow_rows:
+                if row['Traffic Item'] in flow_names \
+                        and row['Event Name'] != '':
+                    has_event = True
+                    break
+            if has_event is True:
+                break
+            if count * sleep_time > self._analytics_timeout:
+                raise Exception("Somehow event is not reflected in stat")
+            time.sleep(sleep_time)
+            count += 1
+        return flow_rows
+    
     def result(self, request):
         flow_names = request._properties.get('flow_names')
         if not isinstance(flow_names, list):
@@ -87,35 +102,46 @@ class Advanced(object):
             raise Exception(msg)
         if flow_names is None or len(flow_names) == 0:
             flow_names = [flow.name for flow in self._api.snappi_config.flows]
-        flow_stat = self._api.assistant.StatViewAssistant(
-            'Flow Statistics')
-        flow_rows = flow_stat.Rows
+        flow_rows = self._get_flow_rows(flow_names)
         traffic_stat = self._api.assistant.StatViewAssistant(
             'Traffic Item Statistics')
         traffic_index = {}
         for index, row in enumerate(traffic_stat.Rows):
             traffic_index[row['Traffic Item']] = index
-
         response = []
         drill_down_options = traffic_stat.DrillDownOptions()
         for flow_name in flow_names:
             convergence = {}
-            flow_results = self.get_flow_result(flow_rows,
-                                                flow_name)
-            if flow_name not in traffic_index.keys() or len(flow_results) == 0:
+            if flow_name not in traffic_index.keys():
                 raise Exception("Somehow flow %s is missing" %flow_name)
-            interruption_time = float(flow_results[0]['DP Above Threshold Timestamp'].split(':')[-1]) - \
-                                float(flow_results[0]['DP Below Threshold Timestamp'].split(':')[-1])
-            self._set_result_value(convergence, 'service_interruption_time_ns',
-                                   interruption_time, float)
-            
             events = []
-            for flow_result in flow_results:
+            interruption_time = None
+            for flow_result in flow_rows:
                 event = {}
+                event_name = flow_result['Event Name']
+                if event_name == '' or \
+                        flow_result['Traffic Item'] != flow_name:
+                    continue
+                for route_name in self._api.ixn_route_objects.keys():
+                    if re.search(route_name,
+                                    event_name) is not None:
+                        event['source'] = route_name
+                        event_type = event_name.split(route_name)[-1]
+                        if event_type.strip().lower() == 'disable':
+                            event_type = 'route_withdraw'
+                        else:
+                            event_type = "route_advertise"
+                        event['type'] = event_type
+                        break
                 for external_name, internal_name, external_type in self._EVENT:
-                    self._set_result_value(event, external_name, flow_result[
-                            internal_name], external_type)
+                    value = int(flow_result[internal_name].split('.')[-1])
+                    self._set_result_value(event, external_name, value * 1000, external_type)
                 events.append(event)
+                if interruption_time is None:
+                    interruption_time = float(flow_result['DP Above Threshold Timestamp'].split(':')[-1]) - \
+                                        float(flow_result['DP Below Threshold Timestamp'].split(':')[-1])
+                    self._set_result_value(convergence, 'service_interruption_time_ns',
+                                           interruption_time, float)
             convergence['events'] = events
 
             drill_down_option = 'Drill down per Dest Endpoint'
